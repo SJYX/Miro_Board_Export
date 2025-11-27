@@ -87,7 +87,7 @@ def scrape_dashboard_links(driver, existing_links=None):
     # Wait for dashboard core elements / 等待 dashboard 核心元素加载
     try:
         WebDriverWait(driver, 15).until(
-            EC.presence_of_element_located((By.CSS_SELECTOR, "[data-testid='grid-view'], [data-testid='board-card']"))
+            EC.presence_of_element_located((By.CSS_SELECTOR, "[data-testid='grid-view'], [data-testid='board-card'], a[href*='/app/board/']"))
         )
     except:
         print("Timeout waiting for Dashboard, attempting to scroll anyway... / 等待 Dashboard 加载超时，尝试继续滚动...")
@@ -99,104 +99,101 @@ def scrape_dashboard_links(driver, existing_links=None):
     # This handles virtual scrolling (items being unloaded) / 使用字典存储本次会话抓取到的所有链接 (URL -> Item)
     scraped_items_map = {}
     
+    # Optimization: Locate scrollable container ONCE before loop / 优化：进入循环前定位一次滚动容器
+    scrollable_container = None
+    try:
+        scrollable_container = driver.find_element(By.CSS_SELECTOR, "[data-testid='grid-view']")
+    except:
+        pass
+        
+    # If not found via ID, try to find the largest scrollable element via JS (much faster than Python loop)
+    # 如果没找到，尝试通过 JS 寻找最大的滚动容器 (比 Python 遍历快得多)
+    if not scrollable_container:
+        try:
+            scrollable_container = driver.execute_script("""
+                let maxScroll = 0;
+                let maxDiv = null;
+                document.querySelectorAll('div').forEach(div => {
+                    if (div.scrollHeight > div.clientHeight && div.scrollHeight > maxScroll) {
+                        maxScroll = div.scrollHeight;
+                        maxDiv = div;
+                    }
+                });
+                return maxDiv;
+            """)
+        except:
+            pass
+
     scroll_unchanged_count = 0
     max_scroll_unchanged = 5 # Stop if scroll position doesn't change for N checks / 连续几次滚动位置没变判定为到底
     
     while True:
-        # 1. Scrape currently visible board links / 抓取当前视图可见的白板链接
+        # 1. Scrape currently visible board links (Optimized via JS) / 抓取当前视图可见的白板链接 (JS 优化版)
         try:
-            elements = driver.find_elements(By.CSS_SELECTOR, "a[href*='/app/board/']")
-            for el in elements:
-                try:
-                    href = el.get_attribute('href')
-                    if not href or len(href) < 10: continue
-                    
-                    if href in scraped_items_map:
-                        continue
-
-                    name = el.text.strip()
-                    if not name:
-                        name = el.get_attribute("aria-label")
-                    if not name:
-                        try:
-                            name_el = el.find_element(By.XPATH, ".//div[contains(@class, 'title')] | .//span[contains(@class, 'title')]")
-                            name = name_el.text.strip()
-                        except:
-                            pass
-                    
-                    if name and '\n' in name:
-                        name = name.split('\n')[0].strip()
-                    
-                    if not name:
-                        name = "Untitled Board"
-
-                    item = {"name": name, "url": href}
+            # Execute JS to extract all data in one go / 执行 JS 一次性提取所有数据
+            # This avoids hundreds of IPC calls between Python and Browser / 避免了 Python 和浏览器之间数百次的通信
+            js_script = """
+            return Array.from(document.querySelectorAll("a[href*='/app/board/']")).map(el => {
+                let name = el.innerText.trim();
+                if (!name) name = el.getAttribute("aria-label");
+                if (!name) {
+                    let titleEl = el.querySelector(".title, [class*='title']");
+                    if (titleEl) name = titleEl.innerText.trim();
+                }
+                if (name && name.includes('\\n')) name = name.split('\\n')[0].trim();
+                
+                return {
+                    url: el.href,
+                    name: name || "Untitled Board"
+                };
+            });
+            """
+            
+            items_on_page = driver.execute_script(js_script)
+            
+            for item in items_on_page:
+                href = item.get('url')
+                if not href or len(href) < 10: continue
+                
+                if href not in scraped_items_map:
                     scraped_items_map[href] = item
-                except:
-                    continue
+                    
         except Exception as e:
             print(f"  [!] Minor error scraping elements: {e} / 抓取元素时发生轻微错误: {e}")
 
         print(f"  -> Currently found {len(scraped_items_map)} boards... / 当前已累计发现 {len(scraped_items_map)} 个白板...")
 
-        # 2. Try to locate scrollable container / 尝试定位滚动容器
-        scrollable_container = None
-        try:
-            scrollable_container = driver.find_element(By.CSS_SELECTOR, "[data-testid='grid-view']")
-        except:
-            pass
-            
-        if not scrollable_container:
-            try:
-                divs = driver.find_elements(By.TAG_NAME, "div")
-                max_scroll = 0
-                for div in divs:
-                    try:
-                        sh = int(div.get_attribute("scrollHeight"))
-                        ch = int(div.get_attribute("clientHeight"))
-                        if sh > ch and sh > max_scroll:
-                            max_scroll = sh
-                            scrollable_container = div
-                    except:
-                        continue
-            except:
-                pass
-
-        # 3. Execute Scroll / 执行滚动
+        # 2. Execute Scroll (Optimized) / 执行滚动 (优化版)
         current_scroll_top = 0
-        scrolled_via_script = False
-        
-        if scrollable_container:
-            try:
-                current_scroll_top = driver.execute_script("return arguments[0].scrollTop", scrollable_container)
-                driver.execute_script("arguments[0].scrollBy(0, 400)", scrollable_container)
-                scrolled_via_script = True
-            except:
-                pass
-        
-        if not scrolled_via_script:
-            current_scroll_top = driver.execute_script("return window.pageYOffset || document.documentElement.scrollTop")
-            driver.execute_script("window.scrollBy(0, 400);")
-
-        time.sleep(3)
-        
-        # 4. Check scroll position / 检查滚动位置
         new_scroll_top = 0
-        if scrollable_container:
-            try:
+        
+        try:
+            if scrollable_container:
+                current_scroll_top = driver.execute_script("return arguments[0].scrollTop", scrollable_container)
+                driver.execute_script("arguments[0].scrollBy(0, 400)", scrollable_container) # Increased step / 加大步长
                 new_scroll_top = driver.execute_script("return arguments[0].scrollTop", scrollable_container)
+            else:
+                current_scroll_top = driver.execute_script("return window.pageYOffset || document.documentElement.scrollTop")
+                driver.execute_script("window.scrollBy(0, 400);")
+                new_scroll_top = driver.execute_script("return window.pageYOffset || document.documentElement.scrollTop")
+        except Exception:
+            # If container becomes stale, try window scroll / 如果容器失效，降级为窗口滚动
+            try:
+                scrollable_container = None
+                driver.execute_script("window.scrollBy(0, 400);")
             except:
                 pass
-        else:
-            new_scroll_top = driver.execute_script("return window.pageYOffset || document.documentElement.scrollTop")
-            
+
+        time.sleep(0.5) # Reduced sleep / 缩短等待时间
+        
+        # 3. Check scroll position / 检查滚动位置
         if abs(new_scroll_top - current_scroll_top) < 5:
             scroll_unchanged_count += 1
             print(f"     [.] Scroll position unchanged ({scroll_unchanged_count}/{max_scroll_unchanged}) / 滚动位置未变化")
             
             try:
                 ActionChains(driver).send_keys(Keys.PAGE_DOWN).perform()
-                time.sleep(1)
+                time.sleep(0.5)
             except:
                 pass
                 
@@ -335,6 +332,22 @@ def download_vector_pdf(driver, links_data):
             except:
                 pass
 
+            # Permission Check: Look for "Share" button / 权限检查：寻找 "Share" 按钮
+            # If missing, it likely means we don't have edit/access rights / 如果缺失，通常意味着没有编辑/访问权限
+            try:
+                # Short wait for Share button / 短暂等待 Share 按钮
+                share_btn = WebDriverWait(driver, 3).until(
+                    EC.presence_of_element_located((By.XPATH, "//button[contains(., 'Share')] | //div[contains(text(), 'Share')]"))
+                )
+                print("     [UI] Share button found (Permission OK) / 找到 Share 按钮 (权限正常)")
+            except:
+                print(f"  [X] Share button not found (Insufficient permissions) / 未找到 Share 按钮 (权限不足)")
+                result["status"] = "Failed"
+                result["error"] = "Insufficient permissions (Share button missing)"
+                write_csv_report(result)
+                results.append(result)
+                continue
+
             # 2. Find Export Menu (Main Menu -> Board -> Export) / 寻找导出入口
             print("  -> Finding Export menu... / 寻找 Export 菜单...")
             export_menu_opened = False
@@ -439,6 +452,28 @@ def download_vector_pdf(driver, links_data):
                 results.append(result)
                 continue
 
+            # Check for "Need at least 1 visible frame" popup / 检查 "Need at least 1 visible frame" 弹窗
+            try:
+                # Wait a moment for popup to appear / 稍等片刻让弹窗出现
+                time.sleep(1)
+                no_frame_popup = WebDriverWait(driver, 3).until(
+                    EC.presence_of_element_located((By.XPATH, "//*[contains(., 'You need at least 1 visible frame')] | //*[contains(., 'at least 1 visible frame')]"))
+                )
+                print(f"  [X] Export failed: Need add a frame / 导出失败: 需要添加 Frame")
+                result["status"] = "Failed"
+                result["error"] = "need add a frame"
+                write_csv_report(result)
+                results.append(result)
+                
+                # Close the popup (Esc) / 关闭弹窗
+                try:
+                    ActionChains(driver).send_keys(Keys.ESCAPE).perform()
+                except:
+                    pass
+                continue
+            except:
+                pass # Popup not found, proceed / 未发现弹窗，继续
+
             # 4. Select "Vector" option / 选择 "Vector" 选项
             try:
                 print("     [UI] Waiting for popup and selecting Vector... / 等待导出弹窗并选择 Vector...")
@@ -509,13 +544,55 @@ def download_vector_pdf(driver, links_data):
     return results
 
 def write_csv_report(result):
-    """Helper: Write single result to CSV / 辅助函数：将单条结果写入 CSV"""
+    """Helper: Write single result to CSV (Upsert) / 辅助函数：将单条结果写入 CSV (更新或插入)"""
     try:
+        rows = []
+        header = ["Timestamp", "Board Name", "URL", "Status", "Error Message"]
+        file_exists = os.path.exists(REPORT_FILE)
+        
+        # 1. Read existing rows / 读取现有行
+        if file_exists:
+            with open(REPORT_FILE, 'r', encoding='utf-8-sig') as f:
+                reader = csv.reader(f)
+                try:
+                    read_header = next(reader)
+                    if read_header == header:
+                        rows = list(reader)
+                    else:
+                        # Header mismatch, treat as empty or handle migration (simplified here)
+                        # If mismatch, we might lose old data if we strictly overwrite, 
+                        # but for now let's assume header is consistent due to previous normalization.
+                        # To be safe, if header exists but different, we just append to end or rewrite with new header?
+                        # Let's stick to: if header matches, read rows. If not, maybe it's old format, we just overwrite/append.
+                        # For safety in this specific script context where we normalized earlier:
+                        rows = list(reader) 
+                except StopIteration:
+                    pass
+
+        # 2. Update or Append / 更新或追加
         timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        with open(REPORT_FILE, 'a', newline='', encoding='utf-8-sig') as f:
+        updated = False
+        
+        for i, row in enumerate(rows):
+            if len(row) >= 3 and row[2] == result["url"]: # Match by URL
+                rows[i] = [timestamp, result["name"], result["url"], result["status"], result["error"]]
+                updated = True
+                break
+        
+        if not updated:
+            rows.append([timestamp, result["name"], result["url"], result["status"], result["error"]])
+
+        # 3. Write back / 写回文件
+        with open(REPORT_FILE, 'w', newline='', encoding='utf-8-sig') as f:
             writer = csv.writer(f)
-            writer.writerow([timestamp, result["name"], result["url"], result["status"], result["error"]])
-        print(f"     [Report] Written to CSV: {result['status']} / [报告] 已写入 CSV: {result['status']}")
+            writer.writerow(header)
+            writer.writerows(rows)
+            f.flush()
+            os.fsync(f.fileno())
+            
+        action = "Updated" if updated else "Added"
+        print(f"     [Report] {action} CSV: {result['status']} / [报告] 已{action} CSV: {result['status']}")
+        
     except Exception as e:
         print(f"     [Warning] Failed to write CSV: {e} / [警告] 写入 CSV 失败: {e}")
 
