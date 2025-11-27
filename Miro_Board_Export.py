@@ -92,7 +92,7 @@ def scrape_dashboard_links(driver, existing_links=None):
     except:
         print("Timeout waiting for Dashboard, attempting to scroll anyway... / 等待 Dashboard 加载超时，尝试继续滚动...")
 
-    time.sleep(5) # Allow time for initial content rendering / 给足时间让初始内容渲染
+    time.sleep(2) # Optimized: Reduced from 5s to 2s / 优化：从 5s 减少到 2s
     print("Executing auto-scroll to load all boards... / 正在执行自动滚动以加载所有白板...")
     
     # Use a dictionary to store all links scraped in this session (URL -> Item)
@@ -202,7 +202,7 @@ def scrape_dashboard_links(driver, existing_links=None):
                 break
         else:
             scroll_unchanged_count = 0
-
+            
     print("Consolidating links... / 正在整合链接...")
     
     new_items = []
@@ -323,8 +323,13 @@ def download_vector_pdf(driver, links_data):
             print(f"     URL: {url}")
             driver.get(url)
             
-            # 1. Force wait for page render / 强制等待页面基础渲染
-            time.sleep(8) 
+            # 1. Optimized Board Load Wait / 优化：智能等待白板加载
+            try:
+                # Wait for canvas to ensure board is rendering / 等待 canvas 出现证明白板正在渲染
+                WebDriverWait(driver, 20).until(EC.presence_of_element_located((By.TAG_NAME, "canvas")))
+                time.sleep(3) # Buffer for interactivity (Reduced from 8s) / 交互缓冲 (从 8s 减至 3s)
+            except:
+                time.sleep(5) # Fallback / 降级等待
 
             # Dismiss potential popups (Esc) / 消除可能的干扰弹窗 (Esc)
             try:
@@ -365,7 +370,12 @@ def download_vector_pdf(driver, links_data):
                 if menu_btn:
                     menu_btn.click()
                     print("     [UI] Clicked Main Menu / 点击 Main Menu 成功")
-                    time.sleep(1.5) # Wait for animation / 稍作等待
+                    
+                    # Smart wait for 'Board' option / 智能等待 'Board' 选项出现
+                    try:
+                        wait_normal.until(EC.visibility_of_element_located((By.XPATH, "//*[normalize-space(text())='Board']")))
+                    except:
+                        time.sleep(1)
                     
                     # Level 2 & 3: Hover Board and find Export / 第二级 & 第三级：尝试悬停 Board 并寻找 Export
                     max_retries = 3
@@ -395,7 +405,11 @@ def download_vector_pdf(driver, links_data):
                             time.sleep(1)
                             continue
 
-                        time.sleep(1.5) # Wait for submenu / 等待子菜单展开
+                        # Smart wait for 'Export' / 智能等待 'Export' 选项
+                        try:
+                            wait_normal.until(EC.visibility_of_element_located((By.XPATH, "//*[normalize-space(text())='Export']")))
+                        except:
+                            time.sleep(1)
                         
                         # 2.2 Find and Hover Export / 寻找并悬停 Export
                         print("     [UI] Finding Export option... / 正在寻找 Export 选项...")
@@ -499,7 +513,11 @@ def download_vector_pdf(driver, links_data):
                 export_btn.click()
                 print(f"     [SUCCESS] Export command sent: {url} / 导出指令已发送")
                 
-                time.sleep(2)
+                # Smart wait for download button / 智能等待下载按钮出现
+                try:
+                    WebDriverWait(driver, 5).until(EC.presence_of_element_located((By.XPATH, "//button[contains(., 'Download file')] | //div[contains(text(), 'Download file')]")))
+                except:
+                    time.sleep(2)
                 
             except Exception:
                 print(f"  [X] Export button not found / 未找到 Export 按钮")
