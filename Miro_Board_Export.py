@@ -237,6 +237,7 @@ def download_vector_pdf(driver, links_data):
     wait_long = WebDriverWait(driver, 600)       # Long wait for Vector generation (10 mins) / 矢量图生成专用长等待 (10分钟)
     
     # Initialize CSV report / 初始化 CSV 报告
+    successful_urls = set()
     if not os.path.exists(REPORT_FILE):
         try:
             with open(REPORT_FILE, 'w', newline='', encoding='utf-8-sig') as f:
@@ -245,6 +246,17 @@ def download_vector_pdf(driver, links_data):
             print(f">>> [Report] Created new report file: {REPORT_FILE} / [报告] 已创建新的报告文件")
         except Exception as e:
             print(f"[Warning] Failed to create report file: {e} / [警告] 无法创建报告文件: {e}")
+    else:
+        # Read existing report to find successful exports / 读取现有报告以查找成功的导出
+        try:
+            with open(REPORT_FILE, 'r', encoding='utf-8-sig') as f:
+                reader = csv.DictReader(f)
+                for row in reader:
+                    if row.get("Status") == "Success" and row.get("URL"):
+                        successful_urls.add(row["URL"])
+            print(f">>> [Init] Found {len(successful_urls)} already exported boards. / [初始化] 发现 {len(successful_urls)} 个已成功导出的白板。")
+        except Exception as e:
+            print(f"[Warning] Failed to read report file: {e} / [警告] 无法读取报告文件: {e}")
 
     results = [] # Record results / 记录执行结果
     print(f">>> [Phase 2] Starting batch download, {len(links_data)} tasks... / [阶段二] 开始执行批量下载，共 {len(links_data)} 个任务...")
@@ -258,6 +270,11 @@ def download_vector_pdf(driver, links_data):
             url = item.get('url')
             name = item.get('name', 'Unknown')
             
+        # Skip if already successful / 如果已成功则跳过
+        if url in successful_urls:
+            print(f"[{index+1}/{len(links_data)}] Skipping (Already Exported): {name} / 跳过 (已导出)")
+            continue
+
         result = {"name": name, "url": url, "status": "Pending", "error": ""}
         
         try:
@@ -345,10 +362,11 @@ def download_vector_pdf(driver, links_data):
                             print("     [!] Export option not found, retrying... / 未找到 Export 选项，准备重试...")
                             time.sleep(1)
 
-            except Exception as e:
-                print(f"  [X] Failed to open menu: {e} / 无法打开菜单: {e}")
+            except Exception:
+                # Simplified error / 简化错误信息
+                print(f"  [X] Failed to open menu / 无法打开菜单")
                 result["status"] = "Failed"
-                result["error"] = f"Menu Error: {str(e)}"
+                result["error"] = "Main Menu or Board option not found"
                 write_csv_report(result)
                 results.append(result)
                 continue
@@ -369,10 +387,10 @@ def download_vector_pdf(driver, links_data):
                     (By.XPATH, "//span[contains(text(), 'Save as PDF')] | //div[contains(text(), 'Save as PDF')]")
                 ))
                 save_pdf.click()
-            except Exception as e:
-                print(f"  [X] Failed to click Save as PDF: {e} / 点击 Save as PDF 失败: {e}")
+            except Exception:
+                print(f"  [X] 'Save as PDF' not found / 未找到 'Save as PDF'")
                 result["status"] = "Failed"
-                result["error"] = f"Save PDF Error: {str(e)}"
+                result["error"] = "'Save as PDF' option not found"
                 write_csv_report(result)
                 results.append(result)
                 continue
@@ -385,10 +403,10 @@ def download_vector_pdf(driver, links_data):
                 ))
                 vector_option.click()
                 print("     [UI] Selected Vector / 已选择 Vector")
-            except Exception as e:
-                print(f"  [X] Failed to select Vector: {e} / 选择 Vector 选项失败: {e}")
+            except Exception:
+                print(f"  [X] 'Vector' option not found / 未找到 'Vector' 选项")
                 result["status"] = "Failed"
-                result["error"] = f"Vector Option Error: {str(e)}"
+                result["error"] = "'Vector' option not found (Maybe no frames?)"
                 write_csv_report(result)
                 results.append(result)
                 continue
@@ -404,10 +422,10 @@ def download_vector_pdf(driver, links_data):
                 
                 time.sleep(2)
                 
-            except Exception as e:
-                print(f"  [X] Failed to click Export button: {e} / 点击 Export 按钮失败: {e}")
+            except Exception:
+                print(f"  [X] Export button not found / 未找到 Export 按钮")
                 result["status"] = "Failed"
-                result["error"] = f"Export Button Error: {str(e)}"
+                result["error"] = "Export button not found"
                 write_csv_report(result)
                 results.append(result)
                 continue
@@ -424,18 +442,18 @@ def download_vector_pdf(driver, links_data):
                 result["status"] = "Success"
                 
                 time.sleep(5)
-            except Exception as e:
-                print(f"  [X] Failed waiting for Download file button: {e} / 等待/点击 Download file 按钮失败: {e}")
+            except Exception:
+                print(f"  [X] Download file button missing (Timeout) / 下载按钮未出现 (超时)")
                 result["status"] = "Failed"
-                result["error"] = f"Download File Button Error: {str(e)}"
+                result["error"] = "Download file button missing (Generation Timeout)"
                 write_csv_report(result)
                 results.append(result)
                 continue
 
         except Exception as e:
-            print(f"  [ERROR] Error processing board: {e} / 处理白板出错: {e}")
+            print(f"  [ERROR] Unexpected error: {e} / 发生意外错误: {e}")
             result["status"] = "Failed"
-            result["error"] = f"General Error: {str(e)}"
+            result["error"] = f"Unexpected Error: {str(e)}"
             write_csv_report(result)
             results.append(result)
             continue

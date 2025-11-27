@@ -1,24 +1,8 @@
 # Miro Board Export Script
 
-[中文说明 (Chinese Version)](#miro-whiteboard-batch-export-script)
+[English Version](#miro-whiteboard-batch-export-script)
 
 A Python script to automatically scrape all Miro board links from your dashboard and export them as Vector PDFs.
-
-## Features
-
-- **Auto-Scraping**: Automatically scrolls through the Miro dashboard to capture all board links, handling virtual scrolling.
-- **Incremental Update**: Saves links to `miro_board_links.json` and only adds new ones in subsequent runs.
-- **Batch Export**: Automates the "Export -> Save as PDF -> Vector" flow for each board.
-- **Smart Retry**: Handles network jitters and UI loading delays with built-in retry logic.
-- **Reporting**: Generates a CSV report (`miro_export_report.csv`) tracking the status of each export.
-
-## Limitations
-
-- **Permissions**: You cannot export boards if you do not have the necessary permissions (e.g., view-only access without export rights).
-- **Frames Required**: You cannot export boards that do not contain any Frames.
-
-## Prerequisites
-
 - **OS**: Windows (Script is optimized for Windows paths).
 - **Browser**: Microsoft Edge.
 - **Python**: Python 3.x installed.
@@ -79,7 +63,7 @@ MIT License
 
 # Miro Whiteboard Batch Export Script
 
-[English Version](#miro-board-export-script)
+[中文版本](#miro-board-export-script)
 
 一个用于自动抓取 Dashboard 所有 Miro Board 链接并批量导出为矢量 PDF 的 Python 脚本。
 
@@ -89,6 +73,7 @@ MIT License
 - **增量更新**: 将链接保存到 `miro_board_links.json`，后续运行仅添加新链接。
 - **批量导出**: 自动化每个 Board 的 "Export -> Save as PDF -> Vector" 流程。
 - **智能重试**: 内置重试逻辑，处理网络抖动和 UI 加载延迟。
+- **断点续传**: 跳过已成功导出的 Board (基于 `miro_export_report.csv`)。
 - **报告生成**: 生成 CSV 报告 (`miro_export_report.csv`) 跟踪每个导出的状态。
 
 ## 限制 (Limitations)
