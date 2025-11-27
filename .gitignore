@@ -2,3 +2,4 @@ __pycache__/
 *.pyc
 miro_board_links.json
 miro_export_report.csv
+*.pdf

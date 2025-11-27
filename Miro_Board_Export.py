@@ -238,7 +238,62 @@ def download_vector_pdf(driver, links_data):
     
     # Initialize CSV report / 初始化 CSV 报告
     successful_urls = set()
-    if not os.path.exists(REPORT_FILE):
+    
+    # Check and normalize CSV format / 检查并标准化 CSV 格式
+    if os.path.exists(REPORT_FILE):
+        try:
+            rows_to_keep = []
+            header_needs_update = False
+            
+            with open(REPORT_FILE, 'r', encoding='utf-8-sig') as f:
+                reader = csv.reader(f)
+                try:
+                    header = next(reader)
+                except StopIteration:
+                    header = []
+                
+                # Check if it's the old 4-column header / 检查是否为旧的 4 列头部
+                if header and "Board Name" not in header and "URL" in header:
+                    print(">>> [Init] Detected old report format, migrating... / [初始化] 检测到旧版报告格式，正在迁移...")
+                    header_needs_update = True
+                
+                for row in reader:
+                    if not row: continue
+                    
+                    # Normalize row to 5 columns / 将行标准化为 5 列
+                    # Old format: Timestamp, URL, Status, Error Message (4 cols)
+                    # New format: Timestamp, Board Name, URL, Status, Error Message (5 cols)
+                    
+                    new_row = []
+                    if len(row) == 4:
+                        # Migration: Insert "Unknown" as Board Name / 迁移：插入 "Unknown" 作为白板名称
+                        new_row = [row[0], "Unknown", row[1], row[2], row[3]]
+                    elif len(row) >= 5:
+                        new_row = row[:5] # Keep first 5 columns / 保留前 5 列
+                    else:
+                        # Invalid row, skip or try best effort / 无效行，跳过或尽力尝试
+                        continue
+                        
+                    rows_to_keep.append(new_row)
+                    
+                    # Collect successful URLs / 收集成功的 URL
+                    # Index 2 is URL, Index 3 is Status in the NEW format
+                    if new_row[3] == "Success" and new_row[2]:
+                        successful_urls.add(new_row[2])
+
+            # Rewrite file if needed (header update or mixed content) / 如果需要（头部更新或混合内容），重写文件
+            # We always rewrite to ensure consistency / 我们始终重写以确保持致性
+            with open(REPORT_FILE, 'w', newline='', encoding='utf-8-sig') as f:
+                writer = csv.writer(f)
+                writer.writerow(["Timestamp", "Board Name", "URL", "Status", "Error Message"])
+                writer.writerows(rows_to_keep)
+                
+            print(f">>> [Init] Report normalized. Found {len(successful_urls)} exported boards. / [初始化] 报告已标准化。发现 {len(successful_urls)} 个已导出的白板。")
+
+        except Exception as e:
+            print(f"[Warning] Failed to process report file: {e} / [警告] 处理报告文件失败: {e}")
+            # Fallback: try to continue without history if critical error / 降级：如果发生严重错误，尝试不带历史记录继续
+    else:
         try:
             with open(REPORT_FILE, 'w', newline='', encoding='utf-8-sig') as f:
                 writer = csv.writer(f)
@@ -246,17 +301,6 @@ def download_vector_pdf(driver, links_data):
             print(f">>> [Report] Created new report file: {REPORT_FILE} / [报告] 已创建新的报告文件")
         except Exception as e:
             print(f"[Warning] Failed to create report file: {e} / [警告] 无法创建报告文件: {e}")
-    else:
-        # Read existing report to find successful exports / 读取现有报告以查找成功的导出
-        try:
-            with open(REPORT_FILE, 'r', encoding='utf-8-sig') as f:
-                reader = csv.DictReader(f)
-                for row in reader:
-                    if row.get("Status") == "Success" and row.get("URL"):
-                        successful_urls.add(row["URL"])
-            print(f">>> [Init] Found {len(successful_urls)} already exported boards. / [初始化] 发现 {len(successful_urls)} 个已成功导出的白板。")
-        except Exception as e:
-            print(f"[Warning] Failed to read report file: {e} / [警告] 无法读取报告文件: {e}")
 
     results = [] # Record results / 记录执行结果
     print(f">>> [Phase 2] Starting batch download, {len(links_data)} tasks... / [阶段二] 开始执行批量下载，共 {len(links_data)} 个任务...")
