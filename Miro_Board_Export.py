@@ -50,7 +50,7 @@ logger = setup_logger()
 class CsvReport:
     """Handles CSV report operations: Initialization, Reading, and Upserting."""
 
-    HEADER = ["Timestamp", "Board Name", "URL", "Status", "Error Message"]
+    HEADER = ["Timestamp", "Board Name", "URL", "Owner", "Status", "Error Message"]
 
     def __init__(self, filepath: str):
         self.filepath = filepath
@@ -73,7 +73,7 @@ class CsvReport:
             logger.error(f"Failed to create report file: {e}")
 
     def _normalize_header(self):
-        """Check and migrate old CSV formats to the new 5-column format."""
+        """Check and migrate old CSV formats to the new 6-column format."""
         try:
             rows_to_keep = []
             needs_rewrite = False
@@ -92,12 +92,14 @@ class CsvReport:
                 for row in reader:
                     if not row: continue
                     
-                    # Normalize to 5 columns
+                    # Normalize to 6 columns
                     new_row = []
-                    if len(row) == 4: # Old format
-                        new_row = [row[0], "Unknown", row[1], row[2], row[3]]
-                    elif len(row) >= 5:
-                        new_row = row[:5]
+                    if len(row) == 4: # Old format (Timestamp, Name, URL, Status)
+                        new_row = [row[0], "Unknown", row[1], "Unknown", row[2], row[3]]
+                    elif len(row) == 5: # Previous format (Timestamp, Name, URL, Status, Error)
+                        new_row = [row[0], row[1], row[2], "Unknown", row[3], row[4]]
+                    elif len(row) >= 6:
+                        new_row = row[:6]
                     else:
                         continue # Skip invalid
                     
@@ -130,7 +132,8 @@ class CsvReport:
                 reader = csv.reader(f)
                 next(reader, None) # Skip header
                 for row in reader:
-                    if len(row) >= 5 and row[3] == "Success":
+                    # Check index 4 for Status (0:Time, 1:Name, 2:URL, 3:Owner, 4:Status, 5:Error)
+                    if len(row) >= 6 and row[4] == "Success":
                         successful.add(row[2])
         except Exception:
             pass
@@ -151,7 +154,8 @@ class CsvReport:
 
             timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             updated = False
-            new_entry = [timestamp, result["name"], result["url"], result["status"], result["error"]]
+            # 0:Time, 1:Name, 2:URL, 3:Owner, 4:Status, 5:Error
+            new_entry = [timestamp, result["name"], result["url"], result.get("owner", "Unknown"), result["status"], result["error"]]
 
             for i, row in enumerate(rows):
                 if len(row) >= 3 and row[2] == result["url"]:
@@ -277,13 +281,13 @@ class MiroAutomator:
             if url not in seen_urls:
                 new_items.append(item)
                 seen_urls.add(url)
-                logger.info(f"     [+] New: {item['name']}")
+                logger.info(f"     [+] New: {item['name']} (Owner: {item.get('owner', 'Unknown')})")
 
         final_links = []
         # Keep old links
         for item in existing_links:
             if isinstance(item, str):
-                final_links.append({"name": "Unknown (Old)", "url": item})
+                final_links.append({"name": "Unknown (Old)", "url": item, "owner": "Unknown"})
             else:
                 final_links.append(item)
         
@@ -324,9 +328,50 @@ class MiroAutomator:
                 }
                 if (name && name.includes('\\n')) name = name.split('\\n')[0].trim();
                 
+                // Try to find Owner
+                let owner = "Unknown";
+                try {
+                    // Strategy 1: List View (Row)
+                    let row = el.closest('[role="row"]');
+                    if (row) {
+                        // In list view, Owner is typically in a specific column.
+                        // We can look for text that looks like a name, or specific class.
+                        // Assuming standard grid cells:
+                        let cells = row.querySelectorAll('[role="gridcell"]');
+                        if (cells.length >= 5) {
+                             // Try the last few cells for owner name
+                             // Usually: Name, Users, Project, ..., Last Opened, Owner, Actions
+                             // Let's try to get text from the cell before the actions menu
+                             // Or just grab all text and guess.
+                             
+                             // Better: Look for an element that is NOT the date and NOT the name.
+                             // Let's assume it's the 6th column as per user image (index 5)
+                             if (cells[5]) {
+                                owner = cells[5].innerText.trim();
+                             } else if (cells.length > 2) {
+                                // Fallback: try the last text cell
+                                owner = cells[cells.length - 2].innerText.trim();
+                             }
+                        }
+                    }
+                    
+                    // Strategy 2: Grid View (Card)
+                    if (owner === "Unknown") {
+                        let card = el.closest('[data-testid="board-card"]');
+                        if (card) {
+                            // In card view, owner might be in footer
+                            let footer = card.querySelector('[class*="footer"], [class*="bottom"]');
+                            if (footer) owner = footer.innerText.trim();
+                        }
+                    }
+                } catch (e) {
+                    // Ignore owner extraction errors
+                }
+
                 return {
                     url: el.href,
-                    name: name || "Untitled Board"
+                    name: name || "Untitled Board",
+                    owner: owner || "Unknown"
                 };
             });
             """
@@ -367,21 +412,23 @@ class MiroAutomator:
             if isinstance(item, str):
                 url = item
                 name = "Unknown"
+                owner = "Unknown"
             else:
                 url = item.get('url')
                 name = item.get('name', 'Unknown')
+                owner = item.get('owner', 'Unknown')
 
             if url in successful_urls:
                 logger.info(f"[{index+1}/{len(links)}] Skipping (Already Exported): {name}")
                 continue
 
-            logger.info(f"[{index+1}/{len(links)}] Processing: {name}")
+            logger.info(f"[{index+1}/{len(links)}] Processing: {name} (Owner: {owner})")
             
-            result = self._export_single_board(url, name)
+            result = self._export_single_board(url, name, owner)
             report.upsert_result(result)
 
-    def _export_single_board(self, url: str, name: str) -> Dict[str, str]:
-        result = {"name": name, "url": url, "status": "Pending", "error": ""}
+    def _export_single_board(self, url: str, name: str, owner: str) -> Dict[str, str]:
+        result = {"name": name, "url": url, "owner": owner, "status": "Pending", "error": ""}
         
         try:
             self.driver.get(url)
