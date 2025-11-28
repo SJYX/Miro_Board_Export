@@ -386,16 +386,14 @@ class MiroAutomator:
         try:
             self.driver.get(url)
             
-            # 1. Smart Load Wait
-            try:
-                WebDriverWait(self.driver, 20).until(EC.presence_of_element_located((By.TAG_NAME, "canvas")))
-                time.sleep(3) # Buffer
-            except:
-                time.sleep(5) # Fallback
-
+            # 1. Optimized Board Load: Directly check for UI elements
+            # User requested to skip waiting for full page/canvas load
+            # We will rely on the "Share" button check or Menu button check to act as our "wait"
+            
             self._dismiss_popups()
 
-            # 2. Permission Check
+            # 2. Permission Check (Acts as the primary wait for board interactivity)
+            # If "Share" button appears, the UI is ready enough for us to proceed.
             if not self._check_permissions():
                 result["status"] = "Failed"
                 result["error"] = "Insufficient permissions (Share button missing)"
